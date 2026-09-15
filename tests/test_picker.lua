@@ -247,9 +247,60 @@ local function test_merge_digraphs()
   assert_digraphs_tables_equal(expected9, dst9, "merge_digraphs: nil digraph and name value")
 end
 
+-- Tests for insert_digraph Snacks picker integration
+local function test_insert_digraph()
+  local original_digraphs = M.digraphs
+  local original_snacks = package.loaded.snacks
+  local original_buf = vim.api.nvim_get_current_buf()
+  local original_win = vim.api.nvim_get_current_win()
+  local original_pos = vim.api.nvim_win_get_cursor(original_win)
+  local picker_opts
+
+  M.digraphs = {
+    { digraph = 'SM', symbol = '☺', name = 'SMILING FACE' },
+  }
+  package.loaded.snacks = {
+    picker = {
+      pick = function(opts)
+        picker_opts = opts
+      end,
+    },
+  }
+
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_set_current_buf(buf)
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'ab' })
+  vim.api.nvim_win_set_cursor(0, { 1, 1 })
+  M.insert_digraph()
+
+  assert_equal('digraph_picker', picker_opts.source, 'insert_digraph: Snacks source')
+  assert_equal('Insert Digraph', picker_opts.title, 'insert_digraph: picker title')
+  assert_equal('☺ SM SMILING FACE', picker_opts.items[1].text, 'insert_digraph: searchable picker item')
+  assert_equal('none', picker_opts.preview, 'insert_digraph: no preview')
+  assert_equal('select', picker_opts.layout.preset, 'insert_digraph: select layout')
+
+  local picker = { close = function(self) self.closed = true end }
+  picker_opts.confirm(picker, picker_opts.items[1])
+  vim.wait(100, function()
+    return vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1] == '☺ab'
+  end, 10)
+  assert(picker.closed, 'insert_digraph: picker closes after selection')
+  assert_equal('☺ab', vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1],
+    'insert_digraph: selected symbol is inserted')
+
+  M.digraphs = original_digraphs
+  package.loaded.snacks = original_snacks
+  vim.api.nvim_set_current_buf(original_buf)
+  if original_pos[1] >= 1 and vim.api.nvim_buf_line_count(original_buf) >= original_pos[1] then
+    vim.api.nvim_win_set_cursor(original_win, original_pos)
+  end
+  vim.api.nvim_buf_delete(buf, { force = true })
+end
+
 -- Do the tests
 test_validate_digraphs()
 test_merge_digraphs()
+test_insert_digraph()
 
 local exit_code = 0
 if tests_failed then

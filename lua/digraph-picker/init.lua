@@ -1,10 +1,3 @@
-local actions = require('telescope.actions')
-local action_state = require('telescope.actions.state')
-local finders = require('telescope.finders')
-local pickers = require('telescope.pickers')
-local entry_display = require('telescope.pickers.entry_display')
-local conf = require('telescope.config').values
-
 -- Module initialisation
 local M = {}
 M.digraphs = require('digraph-picker.digraphs')
@@ -123,38 +116,17 @@ function M.setup(opts)
   M.update_vim_digraphs(symbols, M.digraphs)
 end
 
--- Custom column layout for Telescope display
-local function make_display(entry)
-  local displayer = entry_display.create({
-    separator = ' ',
-    items = {
-      { width = 0.1 },
-      { width = 0.1 },
-      { width = 0.8 },
-    },
-  })
-  return displayer({
-    { entry.value.symbol,  'TelescopeResultsIdentifier' },
-    { entry.value.digraph, 'TelescopeResultsNumber' },
-    entry.value.name,
-  })
-end
-
-local function debug(val)
-  vim.notify(vim.inspect(val), vim.log.levels.DEBUG)
-end
-
 -- Sends string to the keyboard input buffer.
 local function sendkeys(str)
   local keys = vim.api.nvim_replace_termcodes(str, true, false, true)
   vim.api.nvim_feedkeys(keys, 'n', false)
 end
 
--- Insert `text` at the cursor.
+-- Insert `text` at the cursor captured before the picker was opened.
 -- `mode` is the mode of the window that the text is being inserted into.
-local function insert_text(text, mode)
-  local buf = vim.api.nvim_get_current_buf()
-  local pos = vim.api.nvim_win_get_cursor(0)
+local function insert_text(target, text, mode)
+  local buf = target.buf
+  local pos = target.pos
   local row = pos[1]
   local col = pos[2]
   if mode ~= 'i' then
@@ -164,55 +136,82 @@ local function insert_text(text, mode)
   local new_line = line:sub(1, col) .. text .. line:sub(col + 1)
   vim.api.nvim_buf_set_lines(buf, row - 1, row, false, { new_line })
   local new_col = col + #text
-  vim.api.nvim_win_set_cursor(0, { row, new_col })
+  if vim.api.nvim_win_is_valid(target.win) then
+    vim.api.nvim_win_set_cursor(target.win, { row, new_col })
+  end
 end
 
--- `insert_digraph` opens a Telescope digraph picker and inserts the selected digraph character into the current window.
+local function restore_insert_mode(target, mode)
+  if mode == 'i' and vim.api.nvim_win_is_valid(target.win) then
+    vim.api.nvim_set_current_win(target.win)
+    sendkeys('a')
+  end
+end
+
+-- `insert_digraph` opens a Snacks digraph picker and inserts the selected digraph character into the current window.
 -- This function is normally called in insert mode.
-function M.insert_digraph(opts)
-  opts = opts or {}
+function M.insert_digraph()
   local mode = vim.api.nvim_get_mode().mode -- Mode of window being inserted into
-  pickers.new({}, {
-    prompt_title = "Insert Digraph",
-    finder = finders.new_table {
-      results = M.digraphs,
-      entry_maker = function(entry)
-        return {
-          value = entry,
-          display = make_display,
-          ordinal = entry.digraph .. ' ' .. entry.name,
-        }
-      end
-    },
-    sorter = conf.generic_sorter({}),
-    attach_mappings = function(prompt_bufnr, map)
-      -- Assign callback actions
-      map({ 'i', 'n' }, '<Esc>', function() -- User cancelled with Esc key
-        actions.close(prompt_bufnr)
-        debug("Picker cancelled")
-        if mode == 'i' then
-          sendkeys('a') -- Reenter insert mode
-        end
-      end)
-      actions.select_default:replace(function() -- User made digraph selection
-        actions.close(prompt_bufnr)
-        local selection = action_state.get_selected_entry()
-        if selection then
-          local symbol = selection.value.symbol
-          debug("Symbol selected: " .. symbol)
-          insert_text(symbol, mode)
-          if mode == 'i' then
-            sendkeys('a') -- Reenter insert mode
-          end
-        end
-      end)
-      return true
+  local target = {
+    buf = vim.api.nvim_get_current_buf(),
+    win = vim.api.nvim_get_current_win(),
+    pos = vim.api.nvim_win_get_cursor(0),
+  }
+  local ok, snacks = pcall(require, 'snacks')
+  if not ok or type(snacks.picker) ~= 'table' or type(snacks.picker.pick) ~= 'function' then
+    vim.notify('digraph-picker.nvim requires folke/snacks.nvim with the picker enabled', vim.log.levels.ERROR)
+    return
+  end
+
+  local selected = false
+  snacks.picker.pick({
+    source = 'digraph_picker',
+    title = 'Insert Digraph',
+    items = vim.tbl_map(function(def)
+      return {
+        symbol = def.symbol,
+        digraph = def.digraph,
+        name = def.name,
+        text = table.concat({ def.symbol, def.digraph, def.name }, ' '),
+      }
+    end, M.digraphs),
+    format = function(item)
+      return {
+        { item.symbol, 'Identifier' },
+        { ' ' },
+        { item.digraph, 'Number' },
+        { ' ' },
+        { item.name },
+      }
     end,
-    layout_config = {
-      width = 0.8,
-      height = 0.5,
-    }
-  }):find()
+    preview = 'none',
+    layout = {
+      preset = 'select',
+      layout = {
+        width = 0.8,
+        height = 0.5,
+      },
+    },
+    confirm = function(picker, item)
+      selected = item ~= nil
+      picker:close()
+      if item then
+        vim.schedule(function()
+          if vim.api.nvim_buf_is_valid(target.buf) then
+            insert_text(target, item.symbol, mode)
+          end
+          restore_insert_mode(target, mode)
+        end)
+      end
+    end,
+    on_close = function()
+      if not selected then
+        vim.schedule(function()
+          restore_insert_mode(target, mode)
+        end)
+      end
+    end,
+  })
 end
 
 return M

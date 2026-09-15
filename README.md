@@ -2,11 +2,10 @@
 
 A Neovim plugin for browsing and inserting digraphs. The plugin can be configured with custom digraphs.
 
-![Screenshot](screenshot-1.png)
-
 ## Installation
 
 - Download and install from the Github [srackham/digraph-picker.nvim](https://github.com/srackham/digraph-picker.nvim) repo using your preferred Neovim plugin installer.
+- Enable the `picker` module in [folke/snacks.nvim](https://github.com/folke/snacks.nvim); it provides this plugin's picker UI.
 - Create a keyboard mapping to invoke the digraph picker e.g.
 
         vim.keymap.set({ 'i', 'n' }, '<C-k><C-k>', require('digraph-picker').insert_digraph,
@@ -20,7 +19,10 @@ If you use the [LazyVim](https://www.lazyvim.org/) package manager:
    return {
      'srackham/digraph-picker.nvim',
      dependencies = {
-       'nvim-telescope/telescope.nvim',
+       {
+         'folke/snacks.nvim',
+         opts = { picker = {} },
+       },
      },
      version = '*', -- Install latest tagged version
      config = function()
